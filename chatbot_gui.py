@@ -109,7 +109,7 @@ class IDE:
                 self.clear_terminal()
         elif "run" in spoken_text:
             self.run_code()
-        elif "prompt" in spoken_text:
+        elif "chatbot" in spoken_text:
             input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
             response_text = gpt(input_text)
             self.write_in_editor(response_text, replace=False)
@@ -153,7 +153,6 @@ class IDE:
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
-
     def save_code(self):
         with open(self.filename, "w") as file:
             file.write(self.text_area.get(1.0, tk.END))
