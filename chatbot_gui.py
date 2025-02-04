@@ -4,6 +4,7 @@ import keys
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, messagebox
 import subprocess
+import re
 import threading
 
 # Define available modes
@@ -33,6 +34,7 @@ discourse = [{"role": "system",
     4.  **Conciseness:** Generate the minimum amount of code necessary to fulfill the `NEW` command.
     5.  **Comments:** Add clear and concise comments within the generated code to explain its functionality.
     6.  **Pure Python:** Your output should be pure Python code, nothing else.
+    7.  **No Empty Lines:** Do not generate ANY empty lines in your Python code output. Every line of code should contain valid Python syntax or a comment.
 """}]
 
 def gpt(text):
@@ -48,15 +50,18 @@ class LineNumbersText(tk.Text):  # Inherit from tk.Text
                     padx=3,    # Add some padding
                     takefocus=0,  # Prevent focus on line numbers
                     background="lightgray",  # Or any color you like
-                    state=tk.DISABLED)  # Make it read-only
+                    state=tk.DISABLED,
+                    font=self.workspace.cget("font")) # Key: Match font)  # Make it read-only
 
     def update_line_numbers(self, event=None):
         self.config(state=tk.NORMAL)  # Temporarily enable editing
         self.delete("1.0", tk.END)  # Clear existing line numbers
         lines = self.workspace.get("1.0", tk.END).splitlines()  # Get lines from main text area
-        for i, line in enumerate(lines, 1):  # Enumerate lines starting from 1
+        lines = [line for line in lines if line != ""] #If the last line is empty
+        for i in range(1, len(lines) + 1):  # Enumerate lines starting from 1
             self.insert(tk.END, str(i) + "\n")
         self.config(state=tk.DISABLED)  # Disable editing again
+        self.yview_moveto(self.workspace.yview()[0]) # keep scrolling synchronized
 
 class IDE:
     def __init__(self, root):
@@ -64,17 +69,20 @@ class IDE:
         self.root.title("Spoken Python IDE")
         
         # Frame to hold line number widgets
-        self.frame = tk.Frame(root)
-        self.frame.pack(fill=tk.BOTH, expand=True)
+        self.pane = tk.PanedWindow(root, orient=tk.HORIZONTAL)
+        self.pane.pack(fill=tk.BOTH, expand=True)
 
-        
         # Workspace/Text Editor
-        self.workspace = scrolledtext.ScrolledText(self.frame, wrap=tk.WORD, font=("Courier", 12))
+        self.workspace = scrolledtext.ScrolledText(self.pane, wrap=tk.WORD, font=("Courier", 12))
         self.workspace.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.line_number_to_delete = None
         
         # Line numbers widget
-        self.line_numbers = LineNumbersText(self.frame, self.workspace)
+        self.line_numbers = LineNumbersText(self.pane, self.workspace)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
+
+        self.pane.add(self.line_numbers)
+        self.pane.add(self.workspace)
         
         # Bind events to update line numbers
         self.workspace.bind("<KeyRelease>", self.line_numbers.update_line_numbers) #Update when a key is released
@@ -143,12 +151,45 @@ class IDE:
                 self.clear_terminal()
         elif "run" in spoken_text:
             self.run_code()
-        elif "chatbot" in spoken_text:
+        # elif "write" in spoken_text: # this was meant for writing values in case the python needed user input (will update later)
+        #     self.write_in_terminal(spoken_text.split("write")[1].strip(".,!?;:"))
+        elif "chatbot" in spoken_text or "chat bot" in spoken_text:
+            set_replace=False
+            if "replace" in spoken_text:
+                set_replace=True
             input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
             response_text = gpt(input_text)
-            self.write_in_editor(response_text, replace=False)
+            self.write_in_editor(response_text, replace=set_replace)
+        if "delete line" in spoken_text:
+            try:
+                lnum = int(spoken_text.split("delete line")[1].strip(".,!?;:"))
+                self.line_number_to_delete = lnum
+                self.terminal.insert(tk.END, f"Are you sure you want to delete line {lnum}? Confirm by saying 'yes'\n")
+                self.terminal.see(tk.END)
+            except ValueError:
+                self.write_in_terminal("Invalid line number. Please say 'delete line' followed by a number.\n")
+                self.terminal.see(tk.END)
+        elif "yes" in spoken_text and self.line_number_to_delete is not None:
+            self.delete_line(self.line_number_to_delete)
+            self.line_number_to_delete = None
+        elif "no" in spoken_text and self.line_number_to_delete is not None:
+            self.write_in_terminal("Line deletion cancelled.\n")
+            self.terminal.see(tk.END)
+            self.line_number_to_delete = None
         self.update_status_bar()
-        self.line_numbers.update_line_numbers()
+        self.root.after_idle(self.line_numbers.update_line_numbers())
+    def delete_line(self, lnum):
+        try:
+            lines = self.workspace.get("1.0", tk.END).splitlines()
+            if 1 <= lnum <= len(lines):
+                del lines[lnum - 1]
+                self.clear_editor()
+                self.write_in_editor("\n".join(lines) + "\n")  # Add back the final newline
+                self.terminal.insert(tk.END, f"Line {lnum} deleted.\n")
+                self.terminal.see(tk.END)
+        except Exception as e:
+            self.terminal.insert(tk.END, f"Error deleting line: {e}\n")
+            self.terminal.see(tk.END)
     def current_editor(self):
         return self.workspace.get("1.0", tk.END).strip()
     def update_status_bar(self):
@@ -183,7 +224,10 @@ class IDE:
     def write_in_editor(self, text, replace=False):
         if replace:
             self.clear_editor()
-        self.workspace.insert(tk.END, text + '\n')
+        lines = text.splitlines()
+        non_empty_lines = [line for line in lines if line.strip() != ""]
+        cleaned_lines = '\n'.join(non_empty_lines)
+        self.workspace.insert(tk.END, cleaned_lines + '\n')
         self.workspace.see(tk.END)
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
