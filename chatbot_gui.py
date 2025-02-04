@@ -40,15 +40,48 @@ def gpt(text):
     response = client.chat.completions.create(model="gpt-4", messages=discourse)
     reply = response.choices[0].message.content
     return reply
+class LineNumbersText(tk.Text):  # Inherit from tk.Text
+    def __init__(self, master, workspace, **kwargs):
+        super().__init__(master, **kwargs)
+        self.workspace = workspace 
+        self.config(width=4,  # Adjust width as needed
+                    padx=3,    # Add some padding
+                    takefocus=0,  # Prevent focus on line numbers
+                    background="lightgray",  # Or any color you like
+                    state=tk.DISABLED)  # Make it read-only
+
+    def update_line_numbers(self, event=None):
+        self.config(state=tk.NORMAL)  # Temporarily enable editing
+        self.delete("1.0", tk.END)  # Clear existing line numbers
+        lines = self.workspace.get("1.0", tk.END).splitlines()  # Get lines from main text area
+        for i, line in enumerate(lines, 1):  # Enumerate lines starting from 1
+            self.insert(tk.END, str(i) + "\n")
+        self.config(state=tk.DISABLED)  # Disable editing again
 
 class IDE:
     def __init__(self, root):
         self.root = root
         self.root.title("Spoken Python IDE")
+        
+        # Frame to hold line number widgets
+        self.frame = tk.Frame(root)
+        self.frame.pack(fill=tk.BOTH, expand=True)
 
+        
         # Workspace/Text Editor
-        self.workspace = scrolledtext.ScrolledText(root, wrap=tk.WORD, font=("Courier", 12))
-        self.workspace.pack(fill=tk.BOTH, expand=True)
+        self.workspace = scrolledtext.ScrolledText(self.frame, wrap=tk.WORD, font=("Courier", 12))
+        self.workspace.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # Line numbers widget
+        self.line_numbers = LineNumbersText(self.frame, self.workspace)
+        self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
+        
+        # Bind events to update line numbers
+        self.workspace.bind("<KeyRelease>", self.line_numbers.update_line_numbers) #Update when a key is released
+        self.workspace.bind("<MouseWheel>", self.line_numbers.update_line_numbers)  # Update on scroll
+        self.workspace.bind("<Configure>", self.line_numbers.update_line_numbers)  # Update on resize
+        self.line_numbers.update_line_numbers()  # Initial update
+
 
         # Terminal (Console)
         self.terminal = scrolledtext.ScrolledText(root, wrap=tk.WORD, font=("Courier", 10), bg="black", fg="white")
@@ -61,6 +94,7 @@ class IDE:
         self.filename = "untitled.py"
         self.status_bar = tk.Label(root, text=f"Mode: {mode} | File: {self.filename}", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
 
         # Turn on Speech recognition engine
         # Start speech recognition in a separate thread
@@ -114,6 +148,7 @@ class IDE:
             response_text = gpt(input_text)
             self.write_in_editor(response_text, replace=False)
         self.update_status_bar()
+        self.line_numbers.update_line_numbers()
     def current_editor(self):
         return self.workspace.get("1.0", tk.END).strip()
     def update_status_bar(self):
