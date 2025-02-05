@@ -11,8 +11,8 @@ speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_r
 
 speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config)
 client = openai.AzureOpenAI(azure_endpoint=keys.azure_openai_endpoint, api_key = keys.azure_openai_key, api_version=keys.azure_openai_api_version)
-discourse = [{"role": "system", "content": "I am a text editor and code generator. I will output only code in Python. I will not include sample usage."
-"I will only inlcude code and nothing else, I will not include '''python'''."}]
+discourse = [{"role": "system", "content": "I am a Python code generator that will power a spoken IDE. I will output only code in Python. I will not include sample usage."
+"I will only inlcude code and nothing else, I will not include '''python'''. I will either generate one line of code as told, or generate a function."}]
 
 def gpt(text):
     discourse.append({"role": "user", "content": text})
@@ -24,6 +24,7 @@ class ChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title("AI Code Editor")
+        self.code_buffer = []
         
         # Create Text Area
         self.text_area = ScrolledText(root, wrap=tk.WORD, font=("Courier", 12), height=25, width=80)
@@ -37,6 +38,17 @@ class ChatApp:
         self.console_area.pack(padx=10, pady=(5, 10), fill=tk.BOTH, expand=True)
 
         self.setup_continuous_recognition()
+
+    def update_line_numbers(self, event=None):
+        """ Update line numbers dynamically """
+        self.line_numbers.delete("all")
+        line_count = self.text_area.index("end-1c").split(".")[0]  # Get total lines
+        for i in range(1, int(line_count) + 1):
+            self.line_numbers.create_text(10, i * 20, anchor="nw", text=str(i), font=("Courier", 12))
+
+    def sync_scroll(self, event):
+        """ Sync scrolling between text and line numbers """
+        self.line_numbers.yview_moveto(self.text_area.yview()[0])
         
     def setup_continuous_recognition(self):
         # Attach event handlers for continuous speech recognition
@@ -46,30 +58,7 @@ class ChatApp:
         # Start continuous recognition
         speech_recognizer.start_continuous_recognition()
     
-    # def recognize_and_generate(self):
-    #     print("Listening...")
-    #     result = speech_recognizer.recognize_once()
-    #     if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-    #         print("Recognized: {}".format(result.text))
-    #         if "exit" in result.text.lower():
-    #             print("Exiting...")
-    #             self.append_to_editor("Exiting...\n")
-    #             self.root.quit()
-    #             return
-    #         if "run" in result.text.lower():
-    #             self.run_code()
-    #             return
-    #         if "delete" in result.text.lower():
-    #             self.delete_last_line()
-    #             return
-    #         response_text = gpt(result.text)
-    #         print("Response: {}".format(response_text))
-    #         self.append_to_editor(response_text)
-    #     elif result.reason == speechsdk.ResultReason.Canceled:
-    #         cancellation_details = result.cancellation_details
-    #         print("Speech Recognition canceled: {}".format(cancellation_details.reason))
-    #         if cancellation_details.reason == speechsdk.CancellationReason.Error:
-    #             print("Error details: {}".format(cancellation_details.error_details))
+   
     def on_speech_recognized(self, event):
         if event.result.reason == speechsdk.ResultReason.RecognizedSpeech:
             text = event.result.text
@@ -85,6 +74,9 @@ class ChatApp:
             if "delete" in text.lower():
                 self.delete_last_line()
                 return
+            if "undo" in text.lower():
+                self.undo()
+                return
             if "clear" in text.lower():
                 self.clear_editor()
                 return
@@ -94,6 +86,14 @@ class ChatApp:
             response_text = gpt(text)
             print(f"Response: {response_text}")
             self.append_to_editor(response_text)
+            self.code_buffer.append(response_text)
+
+    def undo(self):
+        if self.code_buffer:
+            self.code_buffer.pop()
+            self.text_area.delete("1.0", tk.END)  # Clear text area
+            self.text_area.insert(tk.END, "\n".join(self.code_buffer))  # Reinsert remaining code
+            
 
     def on_speech_canceled(self, event):
         print(f"Speech recognition canceled: {event.reason}")
@@ -104,9 +104,12 @@ class ChatApp:
         self.text_area.see(tk.END)
     
     def delete_last_line(self):
-        lines = self.text_area.get("1.0", tk.END).split("\n")
-        if len(lines) > 2:
+       lines = self.text_area.get("1.0", tk.END).split("\n")
+       if len(lines) > 2:  # Ensures at least one line remains
             self.text_area.delete(f"{len(lines)-2}.0", tk.END)
+            self.text_area.insert(tk.END, "\n")  # Insert a new line
+            self.text_area.mark_set(tk.INSERT, f"{len(lines)-2}.0")
+    
     def clear_editor(self):
         self.text_area.delete("1.0", tk.END)
 
