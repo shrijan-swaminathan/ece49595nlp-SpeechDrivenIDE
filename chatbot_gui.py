@@ -11,15 +11,7 @@ import threading
 class Mode:
     EDIT = "edit"
     DEBUG = "debug"
-
-speech_key = keys.azure_key
-service_region = keys.azure_region
-speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
-speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config)
-client = openai.AzureOpenAI(azure_endpoint=keys.azure_openai_endpoint, api_key = keys.azure_openai_key, api_version=keys.azure_openai_api_version)
-discourse = [{"role": "system", 
-              "content":
-"""
+instructions="""
     You are a Python IDE code generation assistant.  Your primary goal is to generate *pure Python code* based on user input.  Do not include any explanatory text, code fences (```python), or other markup.  Output only valid, executable Python code.
     You receive input in the following format:
         CONTEXT: <insert code currently in editor>
@@ -34,7 +26,13 @@ discourse = [{"role": "system",
     5.  **Comments:** Add clear and concise comments within the generated code to explain its functionality.
     6.  **Pure Python:** Your output should be pure Python code, nothing else.
     7.  **No Empty Lines:** Do not generate ANY empty lines in your Python code output. Every line of code should contain valid Python syntax or a comment.
-"""}]
+"""
+speech_key = keys.azure_key
+service_region = keys.azure_region
+speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config)
+client = openai.AzureOpenAI(azure_endpoint=keys.azure_openai_endpoint, api_key = keys.azure_openai_key, api_version=keys.azure_openai_api_version)
+discourse = [{"role": "system", "content":instructions}]
 
 def gpt(text):
     discourse.append({"role": "user", "content": text})
@@ -66,6 +64,7 @@ class IDE:
     def __init__(self, root):
         self.root = root
         self.root.title("Spoken Python IDE")
+        self.code_buffer=[]
         
         # Mode set
         self.mode=Mode.EDIT
@@ -96,15 +95,11 @@ class IDE:
         # Terminal (Console)
         self.terminal = scrolledtext.ScrolledText(root, wrap=tk.WORD, font=("Courier", 10), bg="black", fg="white")
         self.terminal.pack(fill=tk.BOTH, expand=True)
-        self.insert_buffer = "" #Buffer to store the next insert for follow up questions (like whether to append or replace)
-        self.waiting_for_text = False #Flag to indicate whether we are waiting for text
-        self.waiting_for_append_replace = False # flag to choose whether to append or replace values
 
         # Status Bar (Mode and Filename Display)
         self.filename = "untitled.py"
         self.status_bar = tk.Label(root, text=f"Mode: {self.mode} | File: {self.filename}", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
 
         # Turn on Speech recognition engine
         # Start speech recognition in a separate thread
@@ -141,6 +136,9 @@ class IDE:
         elif "exit" in spoken_text:
             self.write_in_editor("Exiting...\n")
             self.root.quit()
+        elif "undo" in spoken_text:
+            print("Undoing...")
+            self.undo()
         elif "clear" in spoken_text:
             if "terminal" in spoken_text:
                 self.clear_terminal()
@@ -149,10 +147,12 @@ class IDE:
             else:
                 self.clear_editor()
                 self.clear_terminal()
+        elif "one line" in spoken_text:
+            discourse.append({f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"})
+        elif "instructions" in spoken_text:
+            discourse.append({f"role": "system", "content": instructions})
         elif "run" in spoken_text:
             self.run_code()
-        # elif "write" in spoken_text: # this was meant for writing values in case the python needed user input (will update later)
-        #     self.write_in_terminal(spoken_text.split("write")[1].strip(".,!?;:"))
         elif "chatbot" in spoken_text or "chat bot" in spoken_text:
             set_replace=False
             if "replace" in spoken_text:
@@ -196,6 +196,11 @@ class IDE:
         self.status_bar.config(text=f"Mode: {self.mode} | File: {self.filename}")
     def clear_editor(self):
         self.workspace.delete("1.0", tk.END)
+    def undo(self):
+        if self.code_buffer:
+            self.code_buffer.pop()
+            self.clear_editor()  # Clear text area
+            self.write_in_editor(self.code_buffer, False)  # Reinsert remaining code
     def clear_terminal(self):
         self.terminal.delete("1.0", tk.END)
     def run_code(self):
@@ -206,18 +211,6 @@ class IDE:
         if self.mode == Mode.DEBUG:
             # TODO FINISH DEBUG FUNCTIONALITY
             print("DEBUG MODE")
-            # try:
-            #     process = subprocess.run(
-            #         ["python3", "-c", code],
-            #         text=True,
-            #         capture_output=True,
-            #         check=True,
-            #     )
-            #     output = process.stdout
-            #     error = process.stderr
-            # except subprocess.CalledProcessError as e:
-            #     output = e.stdout
-            #     error = e.stderr
         elif self.mode == Mode.EDIT:
             try:
                 process = subprocess.run(
@@ -231,7 +224,7 @@ class IDE:
             except subprocess.CalledProcessError as e:
                 output = e.stdout
                 error = e.stderr
-
+        self.terminal.insert(tk.END, "-" * 40 + "\n")
         self.terminal.insert(tk.END, "Output:\n" + (output if output else "No output.\n"))
         if error:
             self.terminal.insert(tk.END, "Error:\n" + error)
@@ -245,6 +238,7 @@ class IDE:
         cleaned_lines = '\n'.join(non_empty_lines)
         self.workspace.insert(tk.END, cleaned_lines + '\n')
         self.workspace.see(tk.END)
+        self.code_buffer.append(cleaned_lines) # stores current lines in code buffer for undo functionality
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
