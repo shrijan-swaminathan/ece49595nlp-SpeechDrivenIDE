@@ -12,7 +12,6 @@ class Mode:
     EDIT = "edit"
     DEBUG = "debug"
 
-mode=Mode.EDIT
 speech_key = keys.azure_key
 service_region = keys.azure_region
 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
@@ -68,6 +67,9 @@ class IDE:
         self.root = root
         self.root.title("Spoken Python IDE")
         
+        # Mode set
+        self.mode=Mode.EDIT
+        
         # Frame to hold line number widgets
         self.pane = tk.PanedWindow(root, orient=tk.HORIZONTAL)
         self.pane.pack(fill=tk.BOTH, expand=True)
@@ -100,7 +102,7 @@ class IDE:
 
         # Status Bar (Mode and Filename Display)
         self.filename = "untitled.py"
-        self.status_bar = tk.Label(root, text=f"Mode: {mode} | File: {self.filename}", bd=1, relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar = tk.Label(root, text=f"Mode: {self.mode} | File: {self.filename}", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
 
@@ -125,15 +127,13 @@ class IDE:
         speech_recognizer.canceled.connect(canceled_cb)
         print("Listening continuously...")
         speech_recognizer.start_continuous_recognition()
-
     def handle_speech_mode(self, spoken_text):
-        global mode
         # mode changes
         if "mode edit" in spoken_text:
-            mode = Mode.EDIT
+            self.mode = Mode.EDIT
             print("Mode switched to EDIT")
         elif "mode debug" in spoken_text:
-            mode = Mode.DEBUG
+            self.mode = Mode.DEBUG
             print("Mode switched to DEBUG")
         elif "stop" in spoken_text: # stop current execution
             self.write_in_editor("Stopping current execution...\n")
@@ -193,7 +193,7 @@ class IDE:
     def current_editor(self):
         return self.workspace.get("1.0", tk.END).strip()
     def update_status_bar(self):
-        self.status_bar.config(text=f"Mode: {mode} | File: {self.filename}")
+        self.status_bar.config(text=f"Mode: {self.mode} | File: {self.filename}")
     def clear_editor(self):
         self.workspace.delete("1.0", tk.END)
     def clear_terminal(self):
@@ -203,18 +203,34 @@ class IDE:
         if not code:
             self.terminal.insert(tk.END, "No code to run.\n")
             self.terminal.see(tk.END)
-        try:
-            process = subprocess.run(
-                ["python3", "-c", code],
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            output = process.stdout
-            error = process.stderr
-        except subprocess.CalledProcessError as e:
-            output = e.stdout
-            error = e.stderr
+        if self.mode == Mode.DEBUG:
+            # TODO FINISH DEBUG FUNCTIONALITY
+            print("DEBUG MODE")
+            # try:
+            #     process = subprocess.run(
+            #         ["python3", "-c", code],
+            #         text=True,
+            #         capture_output=True,
+            #         check=True,
+            #     )
+            #     output = process.stdout
+            #     error = process.stderr
+            # except subprocess.CalledProcessError as e:
+            #     output = e.stdout
+            #     error = e.stderr
+        elif self.mode == Mode.EDIT:
+            try:
+                process = subprocess.run(
+                    ["python3", "-c", code],
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                output = process.stdout
+                error = process.stderr
+            except subprocess.CalledProcessError as e:
+                output = e.stdout
+                error = e.stderr
 
         self.terminal.insert(tk.END, "Output:\n" + (output if output else "No output.\n"))
         if error:
