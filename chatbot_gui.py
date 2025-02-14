@@ -160,6 +160,34 @@ class IDE:
             input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
             response_text = gpt(input_text)
             self.write_in_editor(response_text, replace=set_replace)
+        elif "scroll to" in spoken_text:
+            try:
+                match = re.search(r"scroll to\s+(\w+)", spoken_text)
+                if not match:
+                    raise ValueError
+                if match:
+                    n = match.group(1).lower()
+                    word_to_number = {
+                        "one": 1,
+                        "two": 2,
+                        "three": 3,
+                        "four": 4,
+                        "five": 5,
+                        "six": 6,
+                        "seven": 7,
+                        "eight": 8,
+                        "nine": 9,
+                        "ten": 10
+                    }
+                    lnum = word_to_number.get(n, None) or int(n)
+                    print(f"Scrolling to line {lnum}")
+                    self.workspace.see(f"{lnum}.0")
+                else:
+                    raise ValueError  # Triggers the except block if no number is found
+            except ValueError:
+                self.write_in_terminal("Invalid line number. Please say 'scroll to' followed by a number.\n")
+                self.terminal.see(tk.END)
+
         if "delete line" in spoken_text:
             try:
                 lnum = int(spoken_text.split("delete line")[1].strip(".,!?;:"))
