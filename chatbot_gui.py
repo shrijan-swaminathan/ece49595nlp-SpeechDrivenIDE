@@ -327,15 +327,7 @@ class IDE:
             self.clear_editor()
         self.workspace.insert(tk.END, cleaned_lines + '\n')
         self.workspace.see(tk.END)
-<<<<<<< HEAD
 
-        # store current state and remove redo since a new item was created
-        if not self.in_undo_redo:
-            self.undo_stack.append(old_text)
-            self.redo_stack.clear()
-            
-=======
->>>>>>> shrijan
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
