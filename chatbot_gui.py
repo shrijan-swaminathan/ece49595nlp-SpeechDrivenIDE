@@ -150,7 +150,7 @@ class IDE:
         elif "one line" in spoken_text:
             discourse.append({f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"})
         elif "instructions" in spoken_text:
-            discourse.append({f"role": "system", "content": instructions})
+            discourse=[{f"role": "system", "content": instructions}]
         elif "run" in spoken_text:
             self.run_code()
         elif "chatbot" in spoken_text or "chat bot" in spoken_text:
