@@ -151,6 +151,15 @@ class IDE:
             discourse.append({f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"})
         elif "instructions" in spoken_text:
             discourse.append({f"role": "system", "content": instructions})
+        elif "run with input" in spoken_text: 
+            try: 
+                user_input_str = spoken_text.split("run with input", 1)[1].strip()
+                if not user_input_str:
+                    self.write_in_terminal("No input specified after 'run with input'.\n")
+                else:
+                    self.run_code_with_input(user_input_str)
+            except IndexError:
+                self.write_in_terminal("No input found. Say 'run with input' followed by your input string.\n")
         elif "run" in spoken_text:
             self.run_code()
         elif "chatbot" in spoken_text or "chat bot" in spoken_text:
@@ -230,6 +239,37 @@ class IDE:
             self.terminal.insert(tk.END, "Error:\n" + error)
         self.terminal.insert(tk.END, "-" * 40 + "\n")
         self.terminal.see(tk.END)
+    def run_code_with_input(self, user_input: str): #NEW - runs with single string input
+        user_input = user_input.strip(".,!?;:'\"") #<--strips punctation so the string input isnt corrupted by azure
+        code = self.workspace.get("1.0", tk.END).strip()
+        if not code:
+            self.terminal.insert(tk.END, "No code to run.\n")
+            self.terminal.see(tk.END)
+            return
+        if self.mode == Mode.DEBUG:
+            self.terminal.insert(tk.END, "DEBUG MODE (not fully implemented)\n")
+        elif self.mode == Mode.EDIT:
+            try:
+                process = subprocess.run(
+                    ["python3", "-c", code],
+                    input=user_input,       #<----this is how we pass our input, and how it's different than "run"
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                output = process.stdout
+                error = process.stderr
+            except subprocess.CalledProcessError as e:
+                output = e.stdout
+                error = e.stderr
+            separator = "-" * 40
+            self.terminal.insert(tk.END, f"{separator}\n")
+            self.terminal.insert(tk.END, "Output:\n" + (output if output else "No output.\n"))
+            if error:
+                self.terminal.insert(tk.END, "Error:\n" + error)
+            self.terminal.insert(tk.END, f"{separator}\n")
+            self.terminal.see(tk.END)
+    
     def write_in_editor(self, text, replace=False):
         if replace:
             self.clear_editor()
