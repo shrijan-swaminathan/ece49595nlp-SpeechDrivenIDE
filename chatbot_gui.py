@@ -9,8 +9,8 @@ import threading
 
 # Define available modes
 class Mode:
-    EDIT = "edit"
-    DEBUG = "debug"
+    DEFAULT = "default"
+    ONELINE = "oneline"
 instructions="""
     You are a Python IDE code generation assistant.  Your primary goal is to generate *pure Python code* based on user input.  Do not include any explanatory text, code fences (```python), or other markup.  Output only valid, executable Python code.
     You receive input in the following format:
@@ -64,10 +64,12 @@ class IDE:
     def __init__(self, root):
         self.root = root
         self.root.title("Spoken Python IDE")
-        self.code_buffer=[]
+        self.undo_stack=[]
+        self.redo_stack=[]
+        self.in_undo_redo=False # flag to check if in an undo/redo section
         
         # Mode set
-        self.mode=Mode.EDIT
+        self.mode=Mode.DEFAULT
         
         # Frame to hold line number widgets
         self.pane = tk.PanedWindow(root, orient=tk.HORIZONTAL)
@@ -122,52 +124,8 @@ class IDE:
         speech_recognizer.canceled.connect(canceled_cb)
         print("Listening continuously...")
         speech_recognizer.start_continuous_recognition()
-    def handle_speech_mode(self, spoken_text):
-        # mode changes
-        if "mode edit" in spoken_text:
-            self.mode = Mode.EDIT
-            print("Mode switched to EDIT")
-        elif "mode debug" in spoken_text:
-            self.mode = Mode.DEBUG
-            print("Mode switched to DEBUG")
-        elif "stop" in spoken_text: # stop current execution
-            self.write_in_editor("Stopping current execution...\n")
-            self.stop_execution()
-        elif "exit" in spoken_text:
-            self.write_in_editor("Exiting...\n")
-            self.root.quit()
-        elif "undo" in spoken_text:
-            print("Undoing...")
-            self.undo()
-        elif "clear" in spoken_text:
-            if "terminal" in spoken_text:
-                self.clear_terminal()
-            elif "editor" in spoken_text:
-                self.clear_editor()
-            else:
-                self.clear_editor()
-                self.clear_terminal()
-        elif "one line" in spoken_text:
-            discourse.append({f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"})
-        elif "instructions" in spoken_text:
-            discourse=[{f"role": "system", "content": instructions}]
-        elif "run" in spoken_text:
-            self.run_code()
-        elif "chatbot" in spoken_text or "chat bot" in spoken_text:
-            set_replace=False
-            if "replace" in spoken_text:
-                set_replace=True
-            input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
-            response_text = gpt(input_text)
-            self.write_in_editor(response_text, replace=set_replace)
-        elif "scroll to" in spoken_text:
-            try:
-                match = re.search(r"scroll to\s+(\w+)", spoken_text)
-                if not match:
-                    raise ValueError
-                if match:
-                    n = match.group(1).lower()
-                    word_to_number = {
+    def word_to_number(self):
+        return {
                         "one": 1,
                         "two": 2,
                         "three": 3,
@@ -178,7 +136,52 @@ class IDE:
                         "eight": 8,
                         "nine": 9,
                         "ten": 10
-                    }
+        }
+    def handle_speech_mode(self, spoken_text):
+        # mode changes
+        if "mode one line" in spoken_text:
+            discourse=[{f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"}]
+            self.mode = Mode.ONELINE
+            print("Mode switched to ONELINE (line-by-line code generation)")
+        elif "mode default" in spoken_text:
+            discourse=[{f"role": "system", "content": instructions}]
+            self.mode = Mode.DEFAULT
+            print("Mode switched to DEFAULT (multi-line code generation)")
+        elif "stop" in spoken_text: # stop current execution
+            self.write_in_editor("Stopping current execution...\n")
+            self.stop_execution()
+        elif "exit" in spoken_text:
+            print("Exiting...\n")
+            self.root.destroy()
+        elif "undo" in spoken_text:
+            print("Undoing...")
+            self.undo()
+        elif "redo" in spoken_text:
+            print("Redoing...")
+            self.redo()
+        elif "clear" in spoken_text:
+            if "terminal" in spoken_text:
+                self.clear_terminal()
+            elif "editor" in spoken_text:
+                self.clear_editor()
+            else:
+                self.clear_editor()
+                self.clear_terminal()
+        elif "run" in spoken_text:
+            self.run_code()
+        elif "maestro" in spoken_text:
+            set_replace=False
+            if "replace" in spoken_text:
+                set_replace=True
+            input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
+            response_text = gpt(input_text)
+            self.write_in_editor(response_text, replace=set_replace)
+        elif "scroll to" in spoken_text:
+            try:
+                match = re.search(r"scroll to\s+(\w+)", spoken_text)
+                if match:
+                    n = match.group(1).lower()
+                    word_to_number = self.word_to_number()
                     lnum = word_to_number.get(n, None) or int(n)
                     print(f"Scrolling to line {lnum}")
                     self.workspace.see(f"{lnum}.0")
@@ -190,10 +193,16 @@ class IDE:
 
         if "delete line" in spoken_text:
             try:
-                lnum = int(spoken_text.split("delete line")[1].strip(".,!?;:"))
-                self.line_number_to_delete = lnum
-                self.terminal.insert(tk.END, f"Are you sure you want to delete line {lnum}? Confirm by saying 'yes'\n")
-                self.terminal.see(tk.END)
+                match = re.search(r"delete line\s+(\w+)", spoken_text)
+                if match:
+                    n = match.group(1).lower()
+                    word_to_number = self.word_to_number()
+                    lnum = word_to_number.get(n, None) or int(n)
+                    self.line_number_to_delete = lnum
+                    self.terminal.insert(tk.END, f"Are you sure you want to delete line {lnum}? Confirm by saying 'yes'\n")
+                    self.terminal.see(tk.END)
+                else:
+                    raise ValueError
             except ValueError:
                 self.write_in_terminal("Invalid line number. Please say 'delete line' followed by a number.\n")
                 self.terminal.see(tk.END)
@@ -225,10 +234,19 @@ class IDE:
     def clear_editor(self):
         self.workspace.delete("1.0", tk.END)
     def undo(self):
-        if self.code_buffer:
-            self.code_buffer.pop()
-            self.clear_editor()  # Clear text area
-            self.write_in_editor(self.code_buffer, False)  # Reinsert remaining code
+        if self.undo_stack:
+            self.in_undo_redo=True
+            self.redo_stack.append(self.current_editor())
+            previous_state = self.undo_stack.pop()
+            self.write_in_editor(previous_state, replace=True)
+            self.in_undo_redo=False
+    def redo(self):
+        if self.redo_stack:
+            self.in_undo_redo=True
+            self.undo_stack.append(self.current_editor())
+            next_state = self.redo_stack.pop()
+            self.write_in_editor(next_state, replace=True)
+            self.in_undo_redo=False
     def clear_terminal(self):
         self.terminal.delete("1.0", tk.END)
     def run_code(self):
@@ -236,22 +254,18 @@ class IDE:
         if not code:
             self.terminal.insert(tk.END, "No code to run.\n")
             self.terminal.see(tk.END)
-        if self.mode == Mode.DEBUG:
-            # TODO FINISH DEBUG FUNCTIONALITY
-            print("DEBUG MODE")
-        elif self.mode == Mode.EDIT:
-            try:
-                process = subprocess.run(
-                    ["python3", "-c", code],
-                    text=True,
-                    capture_output=True,
-                    check=True,
-                )
-                output = process.stdout
-                error = process.stderr
-            except subprocess.CalledProcessError as e:
-                output = e.stdout
-                error = e.stderr
+        try:
+            process = subprocess.run(
+                ["python3", "-c", code],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            output = process.stdout
+            error = process.stderr
+        except subprocess.CalledProcessError as e:
+            output = e.stdout
+            error = e.stderr
         self.terminal.insert(tk.END, "-" * 40 + "\n")
         self.terminal.insert(tk.END, "Output:\n" + (output if output else "No output.\n"))
         if error:
@@ -259,14 +273,23 @@ class IDE:
         self.terminal.insert(tk.END, "-" * 40 + "\n")
         self.terminal.see(tk.END)
     def write_in_editor(self, text, replace=False):
-        if replace:
-            self.clear_editor()
+        old_text=self.current_editor()
         lines = text.splitlines()
         non_empty_lines = [line for line in lines if line.strip() != ""]
         cleaned_lines = '\n'.join(non_empty_lines)
+                
+        if replace:
+            self.clear_editor()
         self.workspace.insert(tk.END, cleaned_lines + '\n')
         self.workspace.see(tk.END)
-        self.code_buffer.append(cleaned_lines) # stores current lines in code buffer for undo functionality
+
+        # store current state and remove redo since a new item was created
+        if not self.in_undo_redo:
+            self.undo_stack.append(old_text)
+            self.redo_stack.clear()
+        print("UNDOSTACK: ",self.undo_stack)
+        print("REDOSTACK: ",self.redo_stack)
+        print("in undo redo: ",self.in_undo_redo)
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
