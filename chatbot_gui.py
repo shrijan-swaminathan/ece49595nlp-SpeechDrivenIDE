@@ -183,6 +183,15 @@ class IDE:
                 else:
                     self.clear_editor()
                     self.clear_terminal()
+            elif "run with input" in spoken_text:
+                try: 
+                    user_input_str = spoken_text.split("run with input", 1)[1].strip()
+                    if not user_input_str:
+                        self.write_in_terminal("No input specified after 'run with input'.\n")
+                    else:
+                        self.run_code_with_input(user_input_str)
+                except IndexError:
+                    self.write_in_terminal("No input found. Say 'run with input' followed by your input string.\n")
             elif "run" in spoken_text:
                 self.run_code()
             elif "maestro" in spoken_text:
@@ -301,6 +310,35 @@ class IDE:
                     stderr=subprocess.PIPE,
                 )
                 stdout,stderr = self.running_process.communicate()
+                self.terminal_queue.put(tk.END, "-" * 40 + "\n")
+                self.terminal_queue.put("Output:\n" + (stdout if stdout else "No output.\n"))
+                if stderr:
+                    self.terminal_queue.put(tk.END, "Error:\n" + stderr)
+                self.terminal_queue.put(tk.END, "-" * 40 + "\n")
+            except Exception as e:
+                self.terminal_queue.put(f"Error running code: {e}\n")
+            finally:
+                self.running_process=None
+        if self.running_process is None:
+            thread = threading.Thread(target=run_in_thread, args=(code,))
+            thread.start()
+    def run_code_with_input(self, user_input: str):
+        user_input = user_input.strip(".,!?;:'\"")
+        code = self.workspace.get(1.0, tk.END).strip("")
+        def run_in_thread(code):
+            if not code:
+                self.terminal.insert(tk.END, "No code to run.\n")
+                self.terminal.see(tk.END)
+                return
+            try:
+                self.running_process = subprocess.Popen(
+                    ["python3", "-c", code],
+                    text=True,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                stdout,stderr = self.running_process.communicate(input=user_input)
                 self.terminal_queue.put(tk.END, "-" * 40 + "\n")
                 self.terminal_queue.put("Output:\n" + (stdout if stdout else "No output.\n"))
                 if stderr:
