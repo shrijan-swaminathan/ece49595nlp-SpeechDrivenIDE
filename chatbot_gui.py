@@ -2,7 +2,7 @@ import azure.cognitiveservices.speech as speechsdk
 import openai
 import keys
 import tkinter as tk
-from tkinter import scrolledtext, simpledialog, messagebox
+from tkinter import scrolledtext
 import subprocess
 import re
 import threading
@@ -48,13 +48,13 @@ class LineNumbersText(tk.Text):  # Inherit from tk.Text
                     takefocus=0,  # Prevent focus on line numbers
                     background="lightgray",  # Or any color you like
                     state=tk.DISABLED,
-                    font=self.workspace.cget("font")) # Key: Match font)  # Make it read-only
+                    font=self.workspace.cget("font")) # Make it read-only
 
     def update_line_numbers(self, event=None):
         self.config(state=tk.NORMAL)  # Temporarily enable editing
         self.delete("1.0", tk.END)  # Clear existing line numbers
         lines = self.workspace.get("1.0", tk.END).splitlines()  # Get lines from main text area
-        lines = [line for line in lines if line != ""] #If the last line is empty
+        lines = [line for line in lines if line] #If the last line is empty
         for i in range(1, len(lines) + 1):  # Enumerate lines starting from 1
             self.insert(tk.END, str(i) + "\n")
         self.config(state=tk.DISABLED)  # Disable editing again
@@ -79,7 +79,6 @@ class IDE:
         self.workspace = scrolledtext.ScrolledText(self.pane, wrap=tk.WORD, font=("Courier", 12))
         self.workspace.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         self.line_number_to_delete = None
-        
         # Line numbers widget
         self.line_numbers = LineNumbersText(self.pane, self.workspace)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
@@ -102,6 +101,7 @@ class IDE:
         self.filename = "untitled.py"
         self.status_bar = tk.Label(root, text=f"Mode: {self.mode} | File: {self.filename}", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.filename_to_save=None
 
         # Turn on Speech recognition engine
         # Start speech recognition in a separate thread
@@ -140,11 +140,13 @@ class IDE:
     def handle_speech_mode(self, spoken_text):
         # mode changes
         if "mode one line" in spoken_text:
-            discourse=[{f"role": "system", "content": "You will only generate one line of Python code per request, while also adhering to the these instructions - {instructions}"}]
+            # change instructions to include only one line generation
+            discourse[0]["content"]=f"{instructions}\n    8. **ONE LINE CODE** You will ONLY generate ONE LINE of Python code per request."            
             self.mode = Mode.ONELINE
             print("Mode switched to ONELINE (line-by-line code generation)")
         elif "mode default" in spoken_text:
-            discourse=[{f"role": "system", "content": instructions}]
+            # reset to main instructions
+            discourse[0]["content"]=instructions
             self.mode = Mode.DEFAULT
             print("Mode switched to DEFAULT (multi-line code generation)")
         elif "stop" in spoken_text: # stop current execution
@@ -153,6 +155,8 @@ class IDE:
         elif "exit" in spoken_text:
             print("Exiting...\n")
             self.root.destroy()
+        elif "save file" in spoken_text or "save code" in spoken_text:
+            self.save_code(spoken_text)
         elif "undo" in spoken_text:
             print("Undoing...")
             self.undo()
@@ -274,29 +278,44 @@ class IDE:
         self.terminal.see(tk.END)
     def write_in_editor(self, text, replace=False):
         old_text=self.current_editor()
+        # store old(before writing to editor) state and remove redo since a new item was created
+        if not self.in_undo_redo:
+            self.undo_stack.append(old_text)
+            self.redo_stack.clear()
+        
         lines = text.splitlines()
         non_empty_lines = [line for line in lines if line.strip() != ""]
-        cleaned_lines = '\n'.join(non_empty_lines)
-                
+        cleaned_lines = '\n'.join(non_empty_lines)                
         if replace:
             self.clear_editor()
         self.workspace.insert(tk.END, cleaned_lines + '\n')
         self.workspace.see(tk.END)
-
-        # store current state and remove redo since a new item was created
-        if not self.in_undo_redo:
-            self.undo_stack.append(old_text)
-            self.redo_stack.clear()
-        print("UNDOSTACK: ",self.undo_stack)
-        print("REDOSTACK: ",self.redo_stack)
-        print("in undo redo: ",self.in_undo_redo)
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
-    def save_code(self):
-        with open(self.filename, "w") as file:
-            file.write(self.text_area.get(1.0, tk.END))
-        print(f"Code saved to {self.filename}")
+    def save_code(self, text):
+        match=re.search(r"(save file|save code)(?: as)?\s*(.*)", text)
+        if match:
+            filename = match.group(2).strip()
+            filename = re.sub(r'[^\w\s-]','', filename).replace(" ", "_").strip()
+            if filename:
+                if not filename.endswith(".py"):
+                    filename+=".py"
+            else:
+                filename=self.filename
+            self.filename_to_save=filename
+            self.write_in_terminal(f'Saving file as {filename}\n')
+            try:
+                with open(self.filename_to_save, "w") as file:
+                    file.write(self.current_editor())
+                self.filename = self.filename_to_save
+                self.update_status_bar()
+                self.write_in_terminal(f"File saved as {self.filename}")
+                self.filename_to_save=None
+            except Exception as e:
+                self.write_in_terminal(f"Error saving file: {e}\n")
+        else:
+            self.write_in_terminal("Invalid save command.\n")
 if __name__ == "__main__":
     root = tk.Tk()
     ide = IDE(root)
