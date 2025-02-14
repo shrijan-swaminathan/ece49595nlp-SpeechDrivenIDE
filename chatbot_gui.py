@@ -287,9 +287,7 @@ class IDE:
         if not self.in_undo_redo:
             self.undo_stack.append(old_text)
             self.redo_stack.clear()
-        print("UNDOSTACK: ",self.undo_stack)
-        print("REDOSTACK: ",self.redo_stack)
-        print("in undo redo: ",self.in_undo_redo)
+            
     def write_in_terminal(self, text):
         self.terminal.insert(tk.END, text + '\n')
         self.terminal.see(tk.END)
