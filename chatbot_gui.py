@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import scrolledtext
 import subprocess
 import re
-import threading
+import threading, queue
 
 # Define available modes
 class Mode:
@@ -103,9 +103,16 @@ class IDE:
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         self.filename_to_save=None
 
+        # Threading setup via queues
         # Turn on Speech recognition engine
         # Start speech recognition in a separate thread
-        self.recognize_speech_continuous()
+        self.running_process=None
+        self.terminal_queue = queue.Queue() # for any terminal updates
+        self.speech_queue = queue.Queue() # for the threads
+        self.speech_thread=threading.Thread(target=self.recognize_speech_continuous, daemon=True)
+        self.speech_thread.start()
+        self.root.after(100, self.process_speech_queue) # Check the queues periodically
+        self.root.after(100, self.process_terminal_queue)
     def recognize_speech_continuous(self):
         # recognized voice
         def recognized_cb(evt):
@@ -138,85 +145,90 @@ class IDE:
                         "ten": 10
         }
     def handle_speech_mode(self, spoken_text):
-        # mode changes
-        if "mode one line" in spoken_text:
-            # change instructions to include only one line generation
-            discourse[0]["content"]=f"{instructions}\n    8. **ONE LINE CODE** You will ONLY generate ONE LINE of Python code per request."            
-            self.mode = Mode.ONELINE
-            print("Mode switched to ONELINE (line-by-line code generation)")
-        elif "mode default" in spoken_text:
-            # reset to main instructions
-            discourse[0]["content"]=instructions
-            self.mode = Mode.DEFAULT
-            print("Mode switched to DEFAULT (multi-line code generation)")
-        elif "stop" in spoken_text: # stop current execution
-            self.write_in_editor("Stopping current execution...\n")
-            self.stop_execution()
-        elif "exit" in spoken_text:
+        if "exit" in spoken_text:
             print("Exiting...\n")
             self.root.destroy()
-        elif "save file" in spoken_text or "save code" in spoken_text:
-            self.save_code(spoken_text)
-        elif "undo" in spoken_text:
-            print("Undoing...")
-            self.undo()
-        elif "redo" in spoken_text:
-            print("Redoing...")
-            self.redo()
-        elif "clear" in spoken_text:
-            if "terminal" in spoken_text:
-                self.clear_terminal()
-            elif "editor" in spoken_text:
-                self.clear_editor()
-            else:
-                self.clear_editor()
-                self.clear_terminal()
-        elif "run" in spoken_text:
-            self.run_code()
-        elif "maestro" in spoken_text:
-            set_replace=False
-            if "replace" in spoken_text:
-                set_replace=True
-            input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
-            response_text = gpt(input_text)
-            self.write_in_editor(response_text, replace=set_replace)
-        elif "scroll to" in spoken_text:
-            try:
-                match = re.search(r"scroll to\s+(\w+)", spoken_text)
-                if match:
-                    n = match.group(1).lower()
-                    word_to_number = self.word_to_number()
-                    lnum = word_to_number.get(n, None) or int(n)
-                    print(f"Scrolling to line {lnum}")
-                    self.workspace.see(f"{lnum}.0")
+        if self.running_process: #only commands that should work is 
+            if "stop" in spoken_text: # stop current execution
+                self.write_in_terminal("Stopping current execution...\n")
+                self.stop_execution()
+        else:
+            # mode changes
+            if "mode one line" in spoken_text:
+                # change instructions to include only one line generation
+                discourse[0]["content"]=f"{instructions}\n    8. **ONE LINE CODE** You will ONLY generate ONE LINE of Python code per request."            
+                self.mode = Mode.ONELINE
+                print("Mode switched to ONELINE (line-by-line code generation)")
+            elif "mode default" in spoken_text:
+                # reset to main instructions
+                discourse[0]["content"]=instructions
+                self.mode = Mode.DEFAULT
+                print("Mode switched to DEFAULT (multi-line code generation)")
+            elif "stop" in spoken_text: # stop current execution
+                self.write_in_terminal("Stopping current execution...\n")
+                self.stop_execution()
+            elif "save file" in spoken_text or "save code" in spoken_text:
+                self.save_code(spoken_text)
+            elif "undo" in spoken_text:
+                print("Undoing...")
+                self.undo()
+            elif "redo" in spoken_text:
+                print("Redoing...")
+                self.redo()
+            elif "clear" in spoken_text:
+                if "terminal" in spoken_text:
+                    self.clear_terminal()
+                elif "editor" in spoken_text:
+                    self.clear_editor()
                 else:
-                    raise ValueError  # Triggers the except block if no number is found
-            except ValueError:
-                self.write_in_terminal("Invalid line number. Please say 'scroll to' followed by a number.\n")
-                self.terminal.see(tk.END)
-
-        if "delete line" in spoken_text:
-            try:
-                match = re.search(r"delete line\s+(\w+)", spoken_text)
-                if match:
-                    n = match.group(1).lower()
-                    word_to_number = self.word_to_number()
-                    lnum = word_to_number.get(n, None) or int(n)
-                    self.line_number_to_delete = lnum
-                    self.terminal.insert(tk.END, f"Are you sure you want to delete line {lnum}? Confirm by saying 'yes'\n")
+                    self.clear_editor()
+                    self.clear_terminal()
+            elif "run" in spoken_text:
+                self.run_code()
+            elif "maestro" in spoken_text:
+                set_replace=False
+                if "replace" in spoken_text:
+                    set_replace=True
+                input_text = "CONTEXT:"+self.current_editor()+"\nNEW:"+spoken_text
+                response_text = gpt(input_text)
+                self.write_in_editor(response_text, replace=set_replace)
+            elif "scroll to" in spoken_text:
+                try:
+                    match = re.search(r"scroll to\s+(\w+)", spoken_text)
+                    if match:
+                        n = match.group(1).lower()
+                        word_to_number = self.word_to_number()
+                        lnum = word_to_number.get(n, None) or int(n)
+                        print(f"Scrolling to line {lnum}")
+                        self.workspace.see(f"{lnum}.0")
+                    else:
+                        raise ValueError  # Triggers the except block if no number is found
+                except ValueError:
+                    self.write_in_terminal("Invalid line number. Please say 'scroll to' followed by a number.\n")
                     self.terminal.see(tk.END)
-                else:
-                    raise ValueError
-            except ValueError:
-                self.write_in_terminal("Invalid line number. Please say 'delete line' followed by a number.\n")
+
+            if "delete line" in spoken_text:
+                try:
+                    match = re.search(r"delete line\s+(\w+)", spoken_text)
+                    if match:
+                        n = match.group(1).lower()
+                        word_to_number = self.word_to_number()
+                        lnum = word_to_number.get(n, None) or int(n)
+                        self.line_number_to_delete = lnum
+                        self.terminal.insert(tk.END, f"Are you sure you want to delete line {lnum}? Confirm by saying 'yes'\n")
+                        self.terminal.see(tk.END)
+                    else:
+                        raise ValueError
+                except ValueError:
+                    self.write_in_terminal("Invalid line number. Please say 'delete line' followed by a number.\n")
+                    self.terminal.see(tk.END)
+            elif "yes" in spoken_text and self.line_number_to_delete is not None:
+                self.delete_line(self.line_number_to_delete)
+                self.line_number_to_delete = None
+            elif "no" in spoken_text and self.line_number_to_delete is not None:
+                self.write_in_terminal("Line deletion cancelled.\n")
                 self.terminal.see(tk.END)
-        elif "yes" in spoken_text and self.line_number_to_delete is not None:
-            self.delete_line(self.line_number_to_delete)
-            self.line_number_to_delete = None
-        elif "no" in spoken_text and self.line_number_to_delete is not None:
-            self.write_in_terminal("Line deletion cancelled.\n")
-            self.terminal.see(tk.END)
-            self.line_number_to_delete = None
+                self.line_number_to_delete = None
         self.update_status_bar()
         self.root.after_idle(self.line_numbers.update_line_numbers())
     def delete_line(self, lnum):
@@ -253,29 +265,54 @@ class IDE:
             self.in_undo_redo=False
     def clear_terminal(self):
         self.terminal.delete("1.0", tk.END)
+    def stop_execution(self):
+        if self.running_process:
+            self.running_process.terminate()
+            self.running_process = None
+            self.terminal_queue.put("Code execution stopped.\n")  # Queue the message
+        else:
+            self.terminal_queue.put("No process is currently running.\n")  # Queue the message
+    def process_terminal_queue(self):
+        try:
+            message=self.terminal_queue.get_nowait()
+            self.write_in_terminal(message)
+        except queue.Empty:
+            pass
+        self.root.after(100, self.process_terminal_queue)
+    def process_speech_queue(self):
+        try:
+            spoken_text=self.speech_queue.get_nowait()
+            self.handle_speech_mode(spoken_text.lower())
+        except queue.Empty:
+            pass
+        self.root.after(100, self.process_speech_queue)
     def run_code(self):
         code = self.workspace.get(1.0, tk.END).strip()
-        if not code:
-            self.terminal.insert(tk.END, "No code to run.\n")
-            self.terminal.see(tk.END)
-        try:
-            process = subprocess.run(
-                ["python3", "-c", code],
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            output = process.stdout
-            error = process.stderr
-        except subprocess.CalledProcessError as e:
-            output = e.stdout
-            error = e.stderr
-        self.terminal.insert(tk.END, "-" * 40 + "\n")
-        self.terminal.insert(tk.END, "Output:\n" + (output if output else "No output.\n"))
-        if error:
-            self.terminal.insert(tk.END, "Error:\n" + error)
-        self.terminal.insert(tk.END, "-" * 40 + "\n")
-        self.terminal.see(tk.END)
+        def run_in_thread(code):
+            if not code:
+                self.terminal.insert(tk.END, "No code to run.\n")
+                self.terminal.see(tk.END)
+                return
+            try:
+                self.running_process = subprocess.Popen(
+                    ["python3", "-c", code],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                stdout,stderr = self.running_process.communicate()
+                self.terminal_queue.put(tk.END, "-" * 40 + "\n")
+                self.terminal_queue.put("Output:\n" + (stdout if stdout else "No output.\n"))
+                if stderr:
+                    self.terminal_queue.put(tk.END, "Error:\n" + stderr)
+                self.terminal_queue.put(tk.END, "-" * 40 + "\n")
+            except Exception as e:
+                self.terminal_queue.put(f"Error running code: {e}\n")
+            finally:
+                self.running_process=None
+        if self.running_process is None:
+            thread = threading.Thread(target=run_in_thread, args=(code,))
+            thread.start()
     def write_in_editor(self, text, replace=False):
         old_text=self.current_editor()
         # store old(before writing to editor) state and remove redo since a new item was created
